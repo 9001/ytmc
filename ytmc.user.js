@@ -26,7 +26,7 @@ function grunnur() {
         QSA = document.querySelectorAll.bind(document),
         mknod = document.createElement.bind(document),
         ui = mknod('div'),
-        ui_name = null,
+        ui_nick = null,
         ui_msg = null,
         ui_dl = null,
         last_url = null;
@@ -40,10 +40,10 @@ function grunnur() {
     }
 
     function load_ui() {
-        if (QS('#ytmc_ui')) // have ui || multiple videos visible
+        if (QS('#ytmc_ui'))
             return;
 
-        ui.innerHTML = 'ytmc username: <input type="text" id="ytmc_name" title="will be your identifier on the index website" /> <button id="ytmc_dl">download json</button> <span id="ytmc_msg">no playerdata found</span> <a href="#" id="ytmc_ee">.</a>';
+        ui.innerHTML = 'ytmc username: <input type="text" id="ytmc_nick" title="will be your identifier on the index website" /> <button id="ytmc_dl">download json</button> <span id="ytmc_msg">no playerdata found</span> <a href="#" id="ytmc_ee">.</a>';
         ui.setAttribute('id', 'ytmc_ui');
         try {
             var neigh = QS('ytd-watch-flexy #meta')
@@ -51,7 +51,7 @@ function grunnur() {
 
             ui_dl = QS('#ytmc_dl');
             ui_msg = QS('#ytmc_msg');
-            ui_name = QS('#ytmc_name');
+            ui_nick = QS('#ytmc_nick');
 
             ui_dl.onclick = download_pd;
             QS('#ytmc_ee').onclick = easter;
@@ -148,7 +148,7 @@ function grunnur() {
     async function download_pd() {
         var pd = get_cached_pd(get_id());
         if (!pd)
-            return alert('json not found after all huh');
+            return alert('json lookup failed, userscript broke, try grabbing from localstore');
 
         pd = JSON.parse(pd);
 
@@ -249,7 +249,7 @@ function grunnur() {
             if (Object.keys(result).includes(itag.toString()) && result[itag.toString()].includes("noclen")) {
                 best.video = {
                     [itag.toString()]: result[itag.toString()]
-                }
+                };
                 break;
             }
         }
@@ -257,7 +257,7 @@ function grunnur() {
             if (Object.keys(result).includes(itag.toString()) && result[itag.toString()].includes("noclen")) {
                 best.audio = {
                     [itag.toString()]: result[itag.toString()]
-                }
+                };
                 break;
             }
         }
@@ -265,7 +265,19 @@ function grunnur() {
     }
 
     var s = mknod('style');
-    s.innerHTML = '#ytmc_ui{padding:.5em 0} #ytmc_name{margin-right:3em}';
+    s.innerHTML = `
+        #ytmc_ui {
+            padding: .5em 0;
+            font-size: 1.3em;
+        }
+        #ytmc_nick {
+            margin-right: 3em;
+        }
+        #ytmc_msg {
+            color: #930;
+            font-weight: bold;
+        }
+    `;
     document.head.appendChild(s);
     log('stage 2 ok');
 }
