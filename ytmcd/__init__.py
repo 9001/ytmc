@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 """
-python -m pip install --user -U fastapi uvicorn[standard] databases[sqlite]
-python -m uvicorn ytmcd:app --reload
+python -m pip install --user -U fastapi uvicorn[standard] databases[sqlite] jinja2
+python -m uvicorn ytmcd:app --reload --root-path=/ytmc
 http://127.0.0.1:8000/docs
 """
 
@@ -10,14 +10,17 @@ import sys
 sys.dont_write_bytecode = True
 
 import os
+import time
+import jinja2
 os.system("")
 
-import time
-
-from fastapi import FastAPI  # fappi...
+from fastapi import FastAPI, Request  # fappi...
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 app = FastAPI()
+
+from fastapi.templating import Jinja2Templates
+templates = Jinja2Templates(directory="ytmcd")
 
 from databases import Database
 db = Database('sqlite:///ytmc.db3')
@@ -34,20 +37,22 @@ async def startup():
 
     print("creatign db")
     async with db.transaction():
-        await db.execute("create table vids (at int, nick text, vid text, title text, tuber text)")
+        await db.execute("create table vids (at int, nick text, vid text, title text, chan text)")
 
 
 class Vid(BaseModel):
     nick: str
     vid: str
     title: str
-    tuber: str
+    chan: str
 
 
 @app.get("/vids")
 async def get_vids():
     ret = []
-    async for r in db.iterate("select * from vids"):
+    q = "select * from vids where at > :lim"
+    qa = {"lim": time.time() - 60*60*6}
+    async for r in db.iterate(q, qa):
         ret.append(r)
     
     return ret
@@ -55,26 +60,29 @@ async def get_vids():
 
 @app.post("/")
 async def post_vid(vid: Vid):
-    args = {"at": int(time.time())}
-    args.update(vid)
+    qa = {"at": int(time.time())}
+    qa.update(vid)
+    
+    qa["nick"] = qa["nick"][:32]
+    qa["vid"] = qa["vid"][:11]
+    qa["title"] = qa["title"][:64]
+    qa["chan"] = qa["chan"][:32]
+
     async with db.transaction():
-        q = "insert into vids values(:at,:nick,:vid,:title,:tuber)"
-        await db.execute(q, args)
+        q = "insert into vids values(:at,:nick,:vid,:title,:chan)"
+        await db.execute(q, qa)
+        
+        q = "delete from vids where at < :lim"
+        qa = {"lim": time.time() - 60 * 60 * 6}
+        await db.execute(q, qa)
 
 
 @app.get("/", response_class=HTMLResponse)
-async def get_index():
+async def get_index(req: Request):
     vids = await get_vids()
     if not vids:
-        return "db empty"
+        return "no vids in db"
     
-    keys = list(vids[0].keys())
-    ret = "<table><tr><td>"
-    ret += "</td><td>".join(k for k in keys)
-    ret = [ret + "</td></tr>"]
-    for r in vids:
-        line = "<tr><td>"
-        line += "</td><td>".join(str(r[k]) for k in keys)
-        ret.append(line + "</td></tr>")
-
-    return "\n".join(ret) + "</table>"
+    keys = [x for x in vids[0].keys() if x not in ["at", "vid"]]
+    qa = { "request": req, "keys": keys, "rows": vids, "now": int(time.time()) }
+    return templates.TemplateResponse("index.html", qa)
