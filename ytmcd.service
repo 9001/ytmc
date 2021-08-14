@@ -1,0 +1,9 @@
+[Service]
+SyslogIdentifier=ytmcd
+ExecStart=/usr/bin/python3 -m uvicorn ytmcd:app --host 127.0.0.1 --port 2434 --root-path=/ytmc
+WorkingDirectory=/var/lib/ytmc/
+User=ytmc
+Group=ytmc
+
+[Install]
+WantedBy=multi-user.target
