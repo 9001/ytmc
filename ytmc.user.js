@@ -6,28 +6,17 @@
 // @grant   GM_addStyle
 // ==/UserScript==
 
-/*
-https://www.youtube.com/watch?v=zdUJ4bIiRs0 mengen
-https://www.youtube.com/watch?v=VHwQp1XtWLA priv
-https://www.youtube.com/watch?v=02vRF2yi8VY priv
-https://www.youtube.com/watch?v=0nZxBDK_UII gone
-*/
-
-function log(txt) {
-    console.log(`[ytmc] ${new Date().toISOString().split('T')[1]} ${txt}`);
-}
-
-var scr = document.createElement('script');
-scr.textContent = '(' + grunnur.toString() + ')();';
-(document.head || document.getElementsByTagName('head')[0]).appendChild(scr);
-
 function grunnur() {
+    
+    var ytmc_server = 'http://127.0.0.1:8000/';
+
     var QS = document.querySelector.bind(document),
         QSA = document.querySelectorAll.bind(document),
         mknod = document.createElement.bind(document),
         ui = mknod('div'),
         ui_nick = null,
         ui_msg = null,
+        ui_tx = null,
         ui_dl = null,
         last_url = null;
 
@@ -43,17 +32,33 @@ function grunnur() {
         if (QS('#ytmc_ui'))
             return;
 
-        ui.innerHTML = 'ytmc username: <input type="text" id="ytmc_nick" title="will be your identifier on the index website" /> <button id="ytmc_dl">download json</button> <span id="ytmc_msg">no playerdata found</span> <a href="#" id="ytmc_ee">.</a>';
+        ui.innerHTML = `
+            ytmc username: <input type="text" id="ytmc_nick"
+                title="will be your identifier on the index website" />
+            
+            <button id="ytmc_dl">download json</button>
+            <button id="ytmc_tx"
+                title="tell the server that you have the json (the json itself is not uploaded)"
+                >reannounce</button>
+
+            <span id="ytmc_msg"></span>
+            <a href="#" id="ytmc_ee">.</a>
+        `;
         ui.setAttribute('id', 'ytmc_ui');
         try {
             var neigh = QS('ytd-watch-flexy #meta')
             neigh.parentNode.insertBefore(ui, neigh);
 
             ui_dl = QS('#ytmc_dl');
+            ui_tx = QS('#ytmc_tx');
             ui_msg = QS('#ytmc_msg');
             ui_nick = QS('#ytmc_nick');
 
+            ui_nick.value = localStorage.getItem('ytmc_nick') || '';
+            ui_nick.oninput = namechange;
             ui_dl.onclick = download_pd;
+            ui_tx.onclick = send_to_server;
+            
             QS('#ytmc_ee').onclick = easter;
             freshen_ui();
         }
@@ -63,9 +68,17 @@ function grunnur() {
 
     function freshen_ui() {
         try {
-            var mf = get_cached_pd(get_id());
-            ui_dl.style.display = mf ? '' : 'none';
-            ui_msg.style.display = mf ? 'none' : '';
+            var pd = get_cached_pd(get_id()),
+                msg = '';
+            
+            if (!ui_nick.value)
+                msg = 'put your discord tag in the username field';
+            else if (!pd)
+                msg = 'playerdata not found in cache';
+
+            ui_dl.style.display = ui_tx.style.display = pd ? '' : 'none';
+            ui_msg.style.display = msg ? '' : 'none';
+            ui_msg.textContent = msg;
         } catch (ex) {
             log('freshen_ui failed, ' + ex);
         }
@@ -78,6 +91,11 @@ function grunnur() {
             au = new Audio();
         au.src = base + alts[Math.floor(Math.random() * alts.length)];
         au.play();
+    }
+
+    function namechange() {
+        localStorage.setItem('ytmc_nick', this.value);
+        freshen_ui();
     }
 
     function scrape_pd() {
@@ -105,10 +123,45 @@ function grunnur() {
             JSON.stringify(pd));
 
         log(`stored ${vid}`);
-        freshen_ui();
         last_url = mu;
+        freshen_ui();
+        send_to_server();
     }
     setInterval(scrape_pd, 10 * 1000);
+
+    function send_to_server() {
+        var vid = get_id(),
+            pd = get_cached_pd(vid);
+        
+        if (!pd)
+            return alert('could not retrieve pd from localstore (ytmc userscript bug)');
+
+        pd = JSON.parse(pd);
+
+        fetch(ytmc_server, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                'nick': ui_nick.value,
+                'vid': vid,
+                'title': pd.videoDetails.title,
+                'chan': pd.videoDetails.author
+            })
+        }).then(res => {
+            if (res.ok < 400)
+                log(`announced ${vid} to server with username "${ui_nick.value}"`);
+            else
+                var msg = `announcing ${vid} to server FAILED, error ${res.code}`;
+                log(msg);
+                res.text().then(res2 => {
+                    log(`${msg}, ${res2}`);
+                });
+        }, res => {
+            log(`announcing ${vid} to server FAILED, likely due to umatrix or network issues: ${res}`)
+        });
+    }
 
     function get_cached_pd(vid) {
         for (var key in localStorage) {
@@ -269,16 +322,31 @@ function grunnur() {
         #ytmc_ui {
             padding: .5em 0;
             font-size: 1.3em;
+            position: relative;
+            z-index: 9001;
         }
         #ytmc_nick {
             margin-right: 3em;
         }
         #ytmc_msg {
             color: #930;
+            white-space: pre;
             font-weight: bold;
         }
     `;
     document.head.appendChild(s);
     log('stage 2 ok');
 }
-log('stage 1 ok');
+
+var scr = document.createElement('script');
+scr.textContent = '(' + grunnur.toString() + ')();';
+(document.head || document.getElementsByTagName('head')[0]).appendChild(scr);
+
+console.log(`[ytmc] ${new Date().toISOString().split('T')[1]} stage 1 ok`);
+
+/*
+https://www.youtube.com/watch?v=zdUJ4bIiRs0 mengen
+https://www.youtube.com/watch?v=VHwQp1XtWLA priv
+https://www.youtube.com/watch?v=02vRF2yi8VY priv
+https://www.youtube.com/watch?v=0nZxBDK_UII gone
+*/

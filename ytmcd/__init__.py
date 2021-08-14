@@ -16,8 +16,15 @@ os.system("")
 
 from fastapi import FastAPI, Request  # fappi...
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 from fastapi.templating import Jinja2Templates
 templates = Jinja2Templates(directory="ytmcd")
