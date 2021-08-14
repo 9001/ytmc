@@ -1,3 +1,6 @@
+# change root-path to the location that is proxied from nginx to ytmcd,
+# or if ytmcd has its own subdomain then just remove it
+
 [Service]
 SyslogIdentifier=ytmcd
 ExecStart=/usr/bin/python3 -m uvicorn ytmcd:app --host 127.0.0.1 --port 2434 --root-path=/ytmc
