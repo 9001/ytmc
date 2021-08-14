@@ -11,7 +11,6 @@ sys.dont_write_bytecode = True
 
 import os
 import time
-import jinja2
 os.system("")
 
 from fastapi import FastAPI, Request  # fappi...
@@ -32,6 +31,7 @@ templates = Jinja2Templates(directory="ytmcd")
 from databases import Database
 db = Database('sqlite:///ytmc.db3')
 
+posters = {}
 
 @app.on_event("startup")
 async def startup():
@@ -66,16 +66,41 @@ async def get_vids():
 
 
 @app.post("/")
-async def post_vid(vid: Vid):
-    qa = {"at": int(time.time())}
+async def post_vid(vid: Vid, req: Request):
+    now = int(time.time())
+    qa = {"at": now}
     qa.update(vid)
+
+    # flood check
+    ip = req.client.host
+    try:
+        posters[ip].append(now)
+    except:
+        posters[ip] = [now]
     
+    while now - posters[ip][0] > 600:
+        posters[ip].pop(0)
+    
+    recent = len(posters[ip])
+    if recent > 5:
+        print(f"dropped spam from {ip} ({recent} posts recently)")
+        return
+
+    # san check
+    if len(qa["vid"]) != 11:
+        print(f"dropped spam from {ip} (invalid video id {qa['vid']})")
+        return
+    
+    # aight
     qa["nick"] = qa["nick"][:32]
-    qa["vid"] = qa["vid"][:11]
+    qa["vid"] = qa["vid"]
     qa["title"] = qa["title"][:64]
     qa["chan"] = qa["chan"][:32]
 
     async with db.transaction():
+        q = "delete from vids where nick = :nick and vid = :vid"
+        await db.execute(q, {"nick": qa["nick"], "vid": qa["vid"]})
+
         q = "insert into vids values(:at,:nick,:vid,:title,:chan)"
         await db.execute(q, qa)
         
