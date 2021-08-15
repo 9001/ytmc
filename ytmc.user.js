@@ -11,14 +11,12 @@ function grunnur() {
     var ytmc_server = 'http://127.0.0.1:8000/';
 
     var QS = document.querySelector.bind(document),
-        QSA = document.querySelectorAll.bind(document),
-        mknod = document.createElement.bind(document),
-        ui = mknod('div'),
+        ui_div = document.createElement('div'),
         ui_nick = null,
         ui_msg = null,
         ui_tx = null,
         ui_dl = null,
-        last_url = null;
+        previous_manifest_url = null;
 
     function log(txt) {
         console.log(`[ytmc] ${new Date().toISOString().split('T')[1]} ${txt}`);
@@ -32,7 +30,7 @@ function grunnur() {
         if (QS('#ytmc_ui'))
             return;
 
-        ui.innerHTML = `
+        ui_div.innerHTML = `
             ytmc username: <input type="text" id="ytmc_nick"
                 title="will be your identifier on the index website" />
             
@@ -44,10 +42,10 @@ function grunnur() {
             <span id="ytmc_msg"></span>
             <a href="#" id="ytmc_ee">.</a>
         `;
-        ui.setAttribute('id', 'ytmc_ui');
+        ui_div.setAttribute('id', 'ytmc_ui');
         try {
             var neigh = QS('ytd-watch-flexy #meta')
-            neigh.parentNode.insertBefore(ui, neigh);
+            neigh.parentNode.insertBefore(ui_div, neigh);
 
             ui_dl = QS('#ytmc_dl');
             ui_tx = QS('#ytmc_tx');
@@ -56,8 +54,9 @@ function grunnur() {
 
             ui_nick.value = localStorage.getItem('ytmc_nick') || '';
             ui_nick.oninput = namechange;
-            ui_dl.onclick = download_pd;
+            ui_dl.onclick = download_pdata;
             ui_tx.onclick = send_to_server;
+            ui_tx.style.display = 'none';
             
             QS('#ytmc_ee').onclick = easter;
             freshen_ui();
@@ -68,15 +67,15 @@ function grunnur() {
 
     function freshen_ui() {
         try {
-            var pd = get_cached_pd(get_id()),
+            var pdata = get_cached_pdata(get_id()),
                 msg = '';
             
             if (!ui_nick.value)
                 msg = 'put your discord tag in the username field';
-            else if (!pd)
+            else if (!pdata)
                 msg = 'playerdata not found in cache';
 
-            ui_dl.style.display = ui_tx.style.display = pd ? '' : 'none';
+            ui_dl.style.display = pdata ? '' : 'none';
             ui_msg.style.display = msg ? '' : 'none';
             ui_msg.textContent = msg;
         } catch (ex) {
@@ -98,45 +97,49 @@ function grunnur() {
         freshen_ui();
     }
 
-    function scrape_pd() {
-        var pd = document.querySelector('ytd-watch-flexy');
-        if (!pd || !pd.playerData)
+    function scrape_pdata() {
+        var pdata = document.querySelector('ytd-watch-flexy');
+        if (!pdata || !pdata.playerData)
             return log('no video found');
 
-        pd = pd.playerData;
-        var mu = pd.streamingData.dashManifestUrl || pd.streamingData.hlsManifestUrl;
-        if (!mu || !mu.length)
+        pdata = pdata.playerData;
+        var mf_url = pdata.streamingData.dashManifestUrl || pdata.streamingData.hlsManifestUrl;
+        if (!mf_url || !mf_url.length)
             return log('no playerdata found');
 
-        if (last_url == mu)
+        if (previous_manifest_url == mf_url)
             return;
 
-        var vid = pd.videoDetails.videoId,
+        var yt_id = pdata.videoDetails.videoId,
             now = Math.floor(Date.now() / 1000);
 
-        if (vid != get_id())
-            return log(`vid ${vid} != get_id ${get_id()} ??`);
+        if (yt_id != get_id())
+            return log(`yt_id ${yt_id} != get_id ${get_id()} ??`);
 
-        clean_localstore(vid);
+        clean_localstore(yt_id);
         localStorage.setItem(
-            `ytmc_${now}_${vid}`,
-            JSON.stringify(pd));
+            `ytmc_${now}_${yt_id}`,
+            JSON.stringify(pdata));
 
-        log(`stored ${vid}`);
-        last_url = mu;
+        log(`stored ${yt_id}`);
+        previous_manifest_url = mf_url;
         freshen_ui();
         send_to_server();
     }
-    setInterval(scrape_pd, 10 * 1000);
+    setInterval(scrape_pdata, 10 * 1000);
 
     function send_to_server() {
-        var vid = get_id(),
-            pd = get_cached_pd(vid);
+        var yt_id = get_id(),
+            pdata = get_cached_pdata(yt_id);
         
-        if (!pd)
-            return alert('could not retrieve pd from localstore (ytmc userscript bug)');
+        if (!pdata)
+            return alert('could not retrieve pdata from localstore (ytmc userscript bug)');
 
-        pd = JSON.parse(pd);
+        ui_tx.style.display = '';
+        if (!ui_nick.value)
+            return;
+
+        pdata = JSON.parse(pdata);
 
         fetch(ytmc_server, {
             method: 'POST',
@@ -145,31 +148,34 @@ function grunnur() {
             },
             body: JSON.stringify({
                 'nick': ui_nick.value,
-                'vid': vid,
-                'title': pd.videoDetails.title,
-                'chan': pd.videoDetails.author
+                'vid': yt_id,
+                'title': pdata.videoDetails.title,
+                'chan': pdata.videoDetails.author
             })
         }).then(res => {
-            if (res.ok < 400)
-                log(`announced ${vid} to server with username "${ui_nick.value}"`);
-            else
-                var msg = `announcing ${vid} to server FAILED, error ${res.code}`;
+            if (res.ok < 400) {
+                log(`announced ${yt_id} to server with username "${ui_nick.value}"`);
+                ui_tx.style.display = 'none';
+            }
+            else {
+                var msg = `announcing ${yt_id} to server FAILED, error ${res.code}`;
                 log(msg);
                 res.text().then(res2 => {
                     log(`${msg}, ${res2}`);
                 });
+            }
         }, res => {
-            log(`announcing ${vid} to server FAILED, likely due to umatrix or network issues: ${res}`)
+            log(`announcing ${yt_id} to server FAILED, likely due to umatrix or network issues: ${res}`)
         });
     }
 
-    function get_cached_pd(vid) {
+    function get_cached_pdata(yt_id) {
         for (var key in localStorage) {
-            var m = /^ytmc_([0-9]+)_(.*)/.exec(key);
-            if (!m)
+            var match = /^ytmc_([0-9]+)_(.*)/.exec(key);
+            if (!match)
                 continue;
 
-            if (m[2] == vid)
+            if (match[2] == yt_id)
                 return localStorage.getItem(key);
         }
     }
@@ -177,17 +183,17 @@ function grunnur() {
     function clean_localstore(rm_vid) {
         var rm = [], now = Math.floor(Date.now() / 1000);
         for (var key in localStorage) {
-            var m = /^ytmc_([0-9]+)_(.*)/.exec(key);
-            if (!m)
+            var match = /^ytmc_([0-9]+)_(.*)/.exec(key);
+            if (!match)
                 continue;
 
-            var t = m[1],
-                vid = m[2],
+            var t = match[1],
+                yt_id = match[2],
                 td = now - parseInt(t),
                 expired = td - (60 * 60 * 6); // 6h
 
-            if (expired > 0 || vid == rm_vid) {
-                log(`removing ${vid} (expired ${expired} sec ago)`);
+            if (expired > 0 || yt_id == rm_vid) {
+                log(`removing ${yt_id} (expired ${expired} sec ago)`);
                 rm.push(key);
             }
         }
@@ -198,12 +204,12 @@ function grunnur() {
             catch (ex) { }
     }
 
-    async function download_pd() {
-        var pd = get_cached_pd(get_id());
-        if (!pd)
+    async function download_pdata() {
+        var pdata = get_cached_pdata(get_id());
+        if (!pdata)
             return alert('json lookup failed, userscript broke, try grabbing from localstore');
 
-        pd = JSON.parse(pd);
+        pdata = JSON.parse(pdata);
 
         // modification of getURLs.js
         const VERSION = "1.5"
@@ -226,22 +232,22 @@ function grunnur() {
         async function getYoutubeVideoInfo() {
             var thumbnailUrl,
                 start_ts = '',
-                vid_id = pd.videoDetails.videoId;
+                yt_id = pdata.videoDetails.videoId;
 
             try {
-                thumbnailUrl = pd.microformat.playerMicroformatRenderer.thumbnail.thumbnails[0].url;
-                start_ts = pd.microformat.playerMicroformatRenderer.liveBroadcastDetails.startTimestamp;
+                thumbnailUrl = pdata.microformat.playerMicroformatRenderer.thumbnail.thumbnails[0].url;
+                start_ts = pdata.microformat.playerMicroformatRenderer.liveBroadcastDetails.startTimestamp;
             }
             catch (ex) {
-                thumbnailUrl = `https://img.youtube.com/vi/${vid_id}/maxresdefault.jpg`
+                thumbnailUrl = `https://img.youtube.com/vi/${yt_id}/maxresdefault.jpg`
             }
 
             return {
-                title: pd.videoDetails.title,
-                id: vid_id,
-                channelName: pd.videoDetails.author,
-                channelURL: "https://www.youtube.com/channel/" + pd.videoDetails.channelId,
-                description: pd.videoDetails.shortDescription,
+                title: pdata.videoDetails.title,
+                id: yt_id,
+                channelName: pdata.videoDetails.author,
+                channelURL: "https://www.youtube.com/channel/" + pdata.videoDetails.channelId,
+                description: pdata.videoDetails.shortDescription,
                 thumbnail: await getImage(thumbnailUrl),
                 thumbnailUrl,
                 startTimestamp: start_ts
@@ -295,7 +301,7 @@ function grunnur() {
         };
 
         var result = {};
-        for (var af of pd.streamingData.adaptiveFormats)
+        for (var af of pdata.streamingData.adaptiveFormats)
             result[af.itag] = af.url;
 
         for (const itag of PRIORITY.VIDEO) {
@@ -317,21 +323,31 @@ function grunnur() {
         download(JSON.stringify(best, null, 4), `${get_id()}.urls.json`, "application/json");
     }
 
-    var s = mknod('style');
+    var s = document.createElement('style');
     s.innerHTML = `
         #ytmc_ui {
             padding: .5em 0;
             font-size: 1.3em;
+            line-height: 1.8em;
             position: relative;
             z-index: 9001;
+            color: var(--yt-spec-text-primary);
+        }
+        #ytmc_ui button,
+        #ytmc_msg {
+            margin: 0 .2em;
         }
         #ytmc_nick {
             margin-right: 3em;
         }
         #ytmc_msg {
-            color: #930;
+            color: #fff;
+            background: #820;
             white-space: pre;
             font-weight: bold;
+            padding: .1em .4em;
+            border-radius: .3em;
+            box-shadow: .2em .2em 0 #c70;
         }
     `;
     document.head.appendChild(s);
