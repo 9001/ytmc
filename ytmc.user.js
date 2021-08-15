@@ -2,6 +2,7 @@
 // @name    youtube-manifest-cache
 // @match   https://youtube.com/*
 // @match   https://*.youtube.com/*
+// @exclude https://*/live_chat*
 // @version 1.0
 // @grant   GM_addStyle
 // ==/UserScript==
@@ -16,14 +17,20 @@ function grunnur() {
         ui_msg = null,
         ui_tx = null,
         ui_dl = null,
-        previous_manifest_url = null;
+        previous_manifest_url = null,
+        previous_log_msg = null;
 
-    function log(txt) {
+    function log(txt, err) {
+        if (err && txt == previous_log_msg)
+            return;
+        
+        previous_log_msg = txt;
         console.log(`[ytmc] ${new Date().toISOString().split('T')[1]} ${txt}`);
     }
 
     function get_id() {
-        return /.*[?&]v=([a-zA-Z0-9_-]{11})/.exec(window.location.href)[1];
+        var m = /.*[?&]v=([a-zA-Z0-9_-]{11})/.exec(window.location.href)
+        return m ? m[1] : null;
     }
 
     function load_ui() {
@@ -37,7 +44,7 @@ function grunnur() {
             <button id="ytmc_dl">download json</button>
             <button id="ytmc_tx"
                 title="tell the server that you have the json (the json itself is not uploaded)"
-                >reannounce</button>
+                >announce</button>
 
             <span id="ytmc_msg"></span>
             <a href="#" id="ytmc_ee">.</a>
@@ -67,19 +74,22 @@ function grunnur() {
 
     function freshen_ui() {
         try {
-            var pdata = get_cached_pdata(get_id()),
+            var yt_id = get_id(),
+                pdata = yt_id ? get_cached_pdata(yt_id) : null,
                 msg = '';
             
-            if (!ui_nick.value)
-                msg = 'put your discord tag in the username field';
+            if (!yt_id)
+                msg = 'video id not found';
             else if (!pdata)
                 msg = 'playerdata not found in cache';
+            else if (!ui_nick.value)
+                msg = 'put your discord tag in the username field';
 
             ui_dl.style.display = pdata ? '' : 'none';
             ui_msg.style.display = msg ? '' : 'none';
             ui_msg.textContent = msg;
         } catch (ex) {
-            log('freshen_ui failed, ' + ex);
+            log('freshen_ui failed, ' + ex, true);
         }
     }
 
@@ -98,14 +108,17 @@ function grunnur() {
     }
 
     function scrape_pdata() {
-        var pdata = document.querySelector('ytd-watch-flexy');
+        if (!get_id())
+            return freshen_ui();
+
+        var pdata = QS('ytd-watch-flexy');
         if (!pdata || !pdata.playerData)
-            return log('no video found');
+            return log('no video found', true);
 
         pdata = pdata.playerData;
         var mf_url = pdata.streamingData.dashManifestUrl || pdata.streamingData.hlsManifestUrl;
         if (!mf_url || !mf_url.length)
-            return log('no playerdata found');
+            return log('no playerdata found', true);
 
         if (previous_manifest_url == mf_url)
             return;
@@ -126,7 +139,9 @@ function grunnur() {
         freshen_ui();
         send_to_server();
     }
-    setInterval(scrape_pdata, 10 * 1000);
+    // youtube reuses the player ui when switching streams
+    // so be aggressive to get rid of confusing messages
+    setInterval(scrape_pdata, 2000);
 
     function send_to_server() {
         var yt_id = get_id(),
@@ -192,7 +207,11 @@ function grunnur() {
                 td = now - parseInt(t),
                 expired = td - (60 * 60 * 6); // 6h
 
-            if (expired > 0 || yt_id == rm_vid) {
+            if (yt_id == rm_vid) {
+                log(`removing ${yt_id} (replaced with newer manifest)`);
+                rm.push(key);
+            }
+            else if (expired > 0) {
                 log(`removing ${yt_id} (expired ${expired} sec ago)`);
                 rm.push(key);
             }
@@ -301,14 +320,18 @@ function grunnur() {
         };
 
         var result = {};
+        // document.querySelector('ytd-watch-flexy').playerData.streamingData.adaptiveFormats
         for (var af of pdata.streamingData.adaptiveFormats)
-            result[af.itag] = af.url;
+            if (af.url)
+                result[af.itag + ''] = af.url;
 
+        var found = 0;
         for (const itag of PRIORITY.VIDEO) {
             if (Object.keys(result).includes(itag.toString()) && result[itag.toString()].includes("noclen")) {
                 best.video = {
                     [itag.toString()]: result[itag.toString()]
                 };
+                found++;
                 break;
             }
         }
@@ -317,8 +340,14 @@ function grunnur() {
                 best.audio = {
                     [itag.toString()]: result[itag.toString()]
                 };
+                found++;
                 break;
             }
+        }
+        if (found != 2) {
+            alert('this video does not have stream URLs exposed directly in the playerdata\n\nyou will now get a janky json which WILL NOT WORK without fixing it by grabbing the stream URLs from the attached manifest manually');
+            best.dash = pdata.streamingData.dashManifestUrl;
+            best.hls = pdata.streamingData.hlsManifestUrl;
         }
         download(JSON.stringify(best, null, 4), `${get_id()}.urls.json`, "application/json");
     }
@@ -338,7 +367,7 @@ function grunnur() {
             margin: 0 .2em;
         }
         #ytmc_nick {
-            margin-right: 3em;
+            margin-right: 2em;
         }
         #ytmc_msg {
             color: #fff;
@@ -351,14 +380,14 @@ function grunnur() {
         }
     `;
     document.head.appendChild(s);
-    log('stage 2 ok');
+    log(`stage 2 ok: ${document.location.href}`);
 }
 
 var scr = document.createElement('script');
 scr.textContent = '(' + grunnur.toString() + ')();';
 (document.head || document.getElementsByTagName('head')[0]).appendChild(scr);
 
-console.log(`[ytmc] ${new Date().toISOString().split('T')[1]} stage 1 ok`);
+console.log(`[ytmc] ${new Date().toISOString().split('T')[1]} stage 1 ok: ${document.location.href}`);
 
 /*
 https://www.youtube.com/watch?v=zdUJ4bIiRs0 mengen
